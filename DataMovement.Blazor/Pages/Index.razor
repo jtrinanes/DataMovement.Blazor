@@ -1,0 +1,92 @@
+﻿@page "/"
+@using System 
+@using System.IO
+@using Microsoft.AspNetCore.Hosting
+@using Microsoft.Azure.Storage
+@using Microsoft.Azure.Storage.Blob
+@using Microsoft.Extensions.Logging
+@using Microsoft.Extensions.Configuration
+@using Azure.Storage.Blobs
+@using Microsoft.Azure.Storage.DataMovement
+@using System.Diagnostics
+@inject IConfiguration Config
+@inject ILogger<Index> Logger
+@inject IWebHostEnvironment Environment
+
+<InputFile OnChange="@LoadFile" multiple />
+
+@if (isLoading)
+{
+	<p>Uploading...</p>
+}
+else
+{
+	<p></p>
+    <ul>
+        @foreach (var file in loadedFiles)
+        {
+            <li>
+                <ul>
+                    <li>Name: @file.Name</li>                    
+                    <li>Size (bytes): @file.Size</li>
+                    <li>Content type: @file.ContentType</li>
+                </ul>
+            </li>
+        }
+    </ul>
+    <p>@elapsedTime</p>
+}
+
+@code {
+
+    private List<IBrowserFile> loadedFiles = new();
+    private long maxFileSize = 52428800; // 50 mb
+    private int maxAllowedFiles = 5;
+    private bool isLoading;
+    private long bytesTransferred;     
+    private string elapsedTime;
+	
+	private async Task LoadFile(InputFileChangeEventArgs e)
+	{
+		isLoading = true;
+		loadedFiles.Clear();
+
+        var connString = Config["AzureStorageConnString"];
+        CloudStorageAccount storageAccount = CloudStorageAccount.Parse(connString);
+        CloudBlobClient blobClient = storageAccount.CreateCloudBlobClient();
+        CloudBlobContainer container = blobClient.GetContainerReference("myblobcontainer");
+
+		foreach (var file in e.GetMultipleFiles(maxAllowedFiles))
+        {
+            try
+            {
+                loadedFiles.Add(file);
+                var trustedFileName = Path.GetRandomFileName();                                
+                
+                CloudBlockBlob blob = container.GetBlockBlobReference(trustedFileName);
+
+                // set the number of parallel operations
+                //TransferManager.Configurations.ParallelOperations = 8;
+
+                Stopwatch stopwatch = Stopwatch.StartNew();
+
+                 // normal upload
+                 //await blob.UploadFromStreamAsync(file.OpenReadStream(maxFileSize)); 
+
+                 // speedy upload
+                 await TransferManager.UploadAsync(file.OpenReadStream(maxFileSize), blob);
+                               
+                stopwatch.Stop();
+                elapsedTime = $"upload operation completed in: {stopwatch.Elapsed.TotalSeconds} seconds";
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("File: {Filename} Error: {Error}", 
+                    file.Name, ex.Message);
+            }
+        }
+
+        isLoading = false;
+	}    
+}
+
